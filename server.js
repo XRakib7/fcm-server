@@ -1,231 +1,148 @@
 const express = require('express');
 const admin = require('firebase-admin');
-const axios = require('axios');
+const helmet = require('helmet');
+const pino = require('pino');
+const pinoHttp = require('pino-http');
+const { z } = require('zod');
+
+// Initialize logger
+const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  formatters: {
+    level: (label) => ({ level: label }),
+  },
+  timestamp: pino.stdTimeFunctions.isoTime,
+});
 
 const app = express();
+
+// Security middleware
+app.use(helmet());
+
+// JSON parsing
 app.use(express.json());
 
-<<<<<<< HEAD
-console.log('?? Server starting...');
+// HTTP request logging (Pino)
+app.use(pinoHttp({ logger }));
 
-// Check environment variable
+// Load service account from environment variable
 const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
-console.log('?? Environment variable exists:', !!serviceAccountJson);
-
 if (!serviceAccountJson) {
-  console.error('? FIREBASE_SERVICE_ACCOUNT environment variable is not set!');
+  logger.fatal('FIREBASE_SERVICE_ACCOUNT environment variable is not set!');
   process.exit(1);
 }
 
 let serviceAccount;
 try {
   serviceAccount = JSON.parse(serviceAccountJson);
-  console.log('? Service account parsed successfully!');
-  console.log('?? Project ID:', serviceAccount.project_id);
-  console.log('?? Client Email:', serviceAccount.client_email);
-} catch (e) {
-  console.error('? Failed to parse JSON:', e.message);
+  logger.info({ projectId: serviceAccount.project_id }, 'Service account parsed');
+} catch (err) {
+  logger.fatal({ err }, 'Failed to parse service account JSON');
   process.exit(1);
 }
 
 // Initialize Firebase Admin SDK
 try {
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(serviceAccount),
   });
-  console.log('? Firebase Admin initialized successfully!');
-} catch (error) {
-  console.error('? Failed to initialize Firebase Admin:', error.message);
+  logger.info('Firebase Admin SDK initialized');
+} catch (err) {
+  logger.fatal({ err }, 'Failed to initialize Firebase Admin');
   process.exit(1);
 }
 
+// Validation schema for incoming notification requests
+const notificationSchema = z.object({
+  token: z.string().min(1),
+  title: z.string().min(1),
+  body: z.string().min(1),
+  data: z.record(z.string()).optional(),
+});
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Send notification endpoint
 app.post('/send-notification', async (req, res) => {
-  console.log('?? Received notification request');
-=======
-console.log('🚀 Server starting...');
+  const requestLogger = req.log.child({ body: req.body });
 
-// Check environment variable
-const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
-console.log('📦 Environment variable FIREBASE_SERVICE_ACCOUNT exists:', !!serviceAccountJson);
-
-if (!serviceAccountJson) {
-  console.error('❌ FIREBASE_SERVICE_ACCOUNT environment variable is not set!');
-  process.exit(1);
-}
-
-// Log first 50 characters to verify it's not empty
-console.log('📝 JSON starts with:', serviceAccountJson.substring(0, 50) + '...');
-
-let serviceAccount;
-try {
-  serviceAccount = JSON.parse(serviceAccountJson);
-  console.log('✅ Service account parsed successfully!');
-  console.log('📋 Project ID:', serviceAccount.project_id);
-  console.log('📋 Client Email:', serviceAccount.client_email);
-  console.log('📋 Private Key exists:', !!serviceAccount.private_key);
-  console.log('📋 Private Key length:', serviceAccount.private_key?.length);
-} catch (e) {
-  console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT JSON:', e.message);
-  console.error('❌ Error details:', e);
-  process.exit(1);
-}
-
-async function getAccessToken() {
   try {
-    console.log('🔑 Getting access token...');
-    const auth = new google.auth.GoogleAuth({
-      credentials: serviceAccount,
-      scopes: ['https://www.googleapis.com/auth/firebase.messaging'],
-    });
-    const client = await auth.getClient();
-    const accessToken = await client.getAccessToken();
-    console.log('✅ Access token obtained');
-    return accessToken.token;
-  } catch (error) {
-    console.error('❌ Error getting access token:', error.message);
-    throw error;
-  }
-}
+    // Validate request body
+    const validated = notificationSchema.parse(req.body);
+    requestLogger.info({ validated }, 'Request validated');
 
-app.post('/send-notification', async (req, res) => {
-  console.log('📨 Received notification request');
-  console.log('📦 Request body:', JSON.stringify(req.body, null, 2));
->>>>>>> 1520d99b926c41d8b4e1c6c69138c9cd477b00ab
-  
-  try {
-    const { token, title, body, data } = req.body;
+    const { token, title, body, data = {} } = validated;
 
-    // Validate required fields
-    if (!token) {
-<<<<<<< HEAD
-      console.log('? Missing token');
-      return res.status(400).json({ error: 'Missing token' });
-    }
-    if (!title) {
-      console.log('? Missing title');
-      return res.status(400).json({ error: 'Missing title' });
-    }
-    if (!body) {
-      console.log('? Missing body');
-      return res.status(400).json({ error: 'Missing body' });
-=======
-      console.log('❌ Missing token');
-      return res.status(400).json({ error: 'Missing token' });
->>>>>>> 1520d99b926c41d8b4e1c6c69138c9cd477b00ab
-    }
-    if (!title) {
-      console.log('❌ Missing title');
-      return res.status(400).json({ error: 'Missing title' });
-    }
-    if (!body) {
-      console.log('❌ Missing body');
-      return res.status(400).json({ error: 'Missing body' });
-    }
-
-    console.log('✅ Validation passed');
-    console.log('🎯 Token:', token.substring(0, 20) + '...');
-    console.log('📝 Title:', title);
-    console.log('📝 Body:', body);
-
-    console.log('? Validation passed');
-    console.log('?? Token (first 20 chars):', token.substring(0, 20) + '...');
-    console.log('?? Title:', title);
-    console.log('?? Body:', body);
-
-<<<<<<< HEAD
-    // Construct the message
+    // Construct FCM message
     const message = {
-      notification: {
-        title: title,
-        body: body,
-=======
-    // FCM v1 endpoint
-    const fcmUrl = `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`;
-    console.log('🔗 FCM URL:', fcmUrl);
-
-    // Build the message payload
-    const message = {
-      message: {
-        token: token,
-        notification: {
-          title: title,
-          body: body,
-        },
-        data: data || {},
-        android: {
-          priority: 'high',
-        },
->>>>>>> 1520d99b926c41d8b4e1c6c69138c9cd477b00ab
-      },
-      data: data || {},
-      android: {
-        priority: 'high',
-      },
-      token: token,
+      notification: { title, body },
+      data,
+      android: { priority: 'high' },
+      token,
     };
 
-<<<<<<< HEAD
-    console.log('?? Sending to FCM using Firebase Admin...');
-
-    // Send using Firebase Admin SDK
+    // Send via Firebase Admin SDK (handles auth & retries automatically)
     const response = await admin.messaging().send(message);
-    
-    console.log('? FCM success! Message ID:', response);
-    res.status(200).json({ success: true, messageId: response });
-    
-  } catch (error) {
-    console.error('? Error sending notification:', error.message);
-    if (error.code) {
-      console.error('?? Error code:', error.code);
-    }
-    if (error.details) {
-      console.error('?? Error details:', error.details);
-=======
-    console.log('📤 Sending to FCM...');
+    requestLogger.info({ messageId: response }, 'Notification sent');
 
-    // Send to FCM
-    const response = await axios.post(fcmUrl, message, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
+    res.status(200).json({
+      success: true,
+      messageId: response,
     });
+  } catch (err) {
+    requestLogger.error({ err }, 'Failed to send notification');
 
-    console.log('✅ FCM success:', response.data);
-    res.status(200).json({ success: true, response: response.data });
-  } catch (error) {
-    console.error('❌ FCM error:', error.message);
-    if (error.response) {
-      console.error('📊 Status:', error.response.status);
-      console.error('📊 Data:', JSON.stringify(error.response.data, null, 2));
+    // Handle validation errors
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid request body',
+        details: err.errors,
+      });
     }
-    if (error.config) {
-      console.error('📊 Request URL:', error.config.url);
->>>>>>> 1520d99b926c41d8b4e1c6c69138c9cd477b00ab
+
+    // Handle FCM errors
+    if (err.code === 'messaging/invalid-argument') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid FCM token or message',
+      });
     }
-    res.status(500).json({ success: false, error: error.message });
+    if (err.code === 'messaging/registration-token-not-registered') {
+      return res.status(400).json({
+        success: false,
+        error: 'Token expired or unregistered',
+      });
+    }
+
+    // Generic server error
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+    });
   }
 });
 
-app.get('/', (req, res) => {
-<<<<<<< HEAD
-  res.send('FCM Proxy Server is running with Firebase Admin!');
+// Graceful shutdown
+const server = app.listen(process.env.PORT || 10000, () => {
+  logger.info(`Server listening on port ${process.env.PORT || 10000}`);
 });
 
-app.get('/test', (req, res) => {
-  res.json({ success: true, message: 'Server is working' });
-=======
-  res.send('FCM Proxy Server is running!');
->>>>>>> 1520d99b926c41d8b4e1c6c69138c9cd477b00ab
-});
+const shutdown = async () => {
+  logger.info('Shutting down gracefully...');
+  server.close(() => {
+    logger.info('HTTP server closed');
+    process.exit(0);
+  });
+  // Force exit after 10 seconds
+  setTimeout(() => {
+    logger.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+};
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-<<<<<<< HEAD
-  console.log(`? Server running on port ${PORT}`);
-});
-=======
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`🌐 Health check: http://localhost:${PORT}`);
-});
->>>>>>> 1520d99b926c41d8b4e1c6c69138c9cd477b00ab
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
