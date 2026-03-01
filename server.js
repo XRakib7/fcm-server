@@ -1,5 +1,5 @@
 const express = require('express');
-const { JWT } = require('google-auth-library');
+const admin = require('firebase-admin');
 const axios = require('axios');
 
 const app = express();
@@ -27,23 +27,15 @@ try {
   process.exit(1);
 }
 
-// Create a JWT client for Firebase
-const client = new JWT({
-  email: serviceAccount.client_email,
-  key: serviceAccount.private_key,
-  scopes: ['https://www.googleapis.com/auth/firebase.messaging'],
-});
-
-async function getAccessToken() {
-  try {
-    console.log('?? Getting access token...');
-    const tokens = await client.authorize();
-    console.log('? Access token obtained');
-    return tokens.access_token;
-  } catch (error) {
-    console.error('? Error getting access token:', error.message);
-    throw error;
-  }
+// Initialize Firebase Admin SDK
+try {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+  console.log('? Firebase Admin initialized successfully!');
+} catch (error) {
+  console.error('? Failed to initialize Firebase Admin:', error.message);
+  process.exit(1);
 }
 
 app.post('/send-notification', async (req, res) => {
@@ -53,58 +45,63 @@ app.post('/send-notification', async (req, res) => {
     const { token, title, body, data } = req.body;
 
     // Validate required fields
-    if (!token || !title || !body) {
-      console.log('? Missing required fields');
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (!token) {
+      console.log('? Missing token');
+      return res.status(400).json({ error: 'Missing token' });
+    }
+    if (!title) {
+      console.log('? Missing title');
+      return res.status(400).json({ error: 'Missing title' });
+    }
+    if (!body) {
+      console.log('? Missing body');
+      return res.status(400).json({ error: 'Missing body' });
     }
 
     console.log('? Validation passed');
     console.log('?? Token (first 20 chars):', token.substring(0, 20) + '...');
+    console.log('?? Title:', title);
+    console.log('?? Body:', body);
 
-    // Get access token
-    const accessToken = await getAccessToken();
-
-    // FCM v1 endpoint
-    const fcmUrl = `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`;
-
-    // Build the message
+    // Construct the message
     const message = {
-      message: {
-        token: token,
-        notification: {
-          title: title,
-          body: body,
-        },
-        data: data || {},
-        android: {
-          priority: 'high',
-        },
+      notification: {
+        title: title,
+        body: body,
       },
+      data: data || {},
+      android: {
+        priority: 'high',
+      },
+      token: token,
     };
 
-    console.log('?? Sending to FCM...');
+    console.log('?? Sending to FCM using Firebase Admin...');
 
-    // Send to FCM
-    const response = await axios.post(fcmUrl, message, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    console.log('? FCM success!');
-    res.status(200).json({ success: true });
+    // Send using Firebase Admin SDK
+    const response = await admin.messaging().send(message);
+    
+    console.log('? FCM success! Message ID:', response);
+    res.status(200).json({ success: true, messageId: response });
+    
   } catch (error) {
-    console.error('? Error:', error.message);
-    if (error.response) {
-      console.error('?? FCM Error Response:', error.response.data);
+    console.error('? Error sending notification:', error.message);
+    if (error.code) {
+      console.error('?? Error code:', error.code);
+    }
+    if (error.details) {
+      console.error('?? Error details:', error.details);
     }
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.get('/', (req, res) => {
-  res.send('FCM Proxy Server is running!');
+  res.send('FCM Proxy Server is running with Firebase Admin!');
+});
+
+app.get('/test', (req, res) => {
+  res.json({ success: true, message: 'Server is working' });
 });
 
 const PORT = process.env.PORT || 10000;
