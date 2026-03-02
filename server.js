@@ -4,20 +4,16 @@ const admin = require('firebase-admin');
 const app = express();
 app.use(express.json());
 
-// Load and initialize Firebase Admin
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
-// In-memory store for recent notifications
+// Simple in-memory store for recent notifications
 const recentNotifications = new Map();
 
-// Clean up old notifications every hour
 setInterval(() => {
   const oneHourAgo = Date.now() - 3600000;
   for (const [key, timestamp] of recentNotifications.entries()) {
-    if (timestamp < oneHourAgo) {
-      recentNotifications.delete(key);
-    }
+    if (timestamp < oneHourAgo) recentNotifications.delete(key);
   }
 }, 3600000);
 
@@ -26,7 +22,6 @@ app.get('/', (req, res) => res.json({ status: 'ok' }));
 app.post('/send-notification', async (req, res) => {
   try {
     const { token, title, body, data = {} } = req.body;
-
     if (!token || !title || !body) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -34,40 +29,29 @@ app.post('/send-notification', async (req, res) => {
     const chatId = data.chatId;
     const recipientId = data.recipientId;
     const now = Date.now();
-
-    // Generate notification key for bundling
     const notificationKey = `${recipientId}_${chatId}`;
-    const lastNotificationTime = recentNotifications.get(notificationKey);
+    const lastSent = recentNotifications.get(notificationKey);
 
-    // If we sent a notification for this chat in the last 30 seconds, update it
-    if (lastNotificationTime && (now - lastNotificationTime) < 30000) {
+    // If we sent a notification for this chat in the last 30 seconds, update it (collapse)
+    if (lastSent && (now - lastSent) < 30000) {
       console.log(`Bundling notification for chat ${chatId}`);
-      
-      try {
-        const messageId = await admin.messaging().send({
-          data: {
-            ...data,
-            type: 'notification_update',
-            title,
-            body,
-            timestamp: now.toString(),
-          },
-          android: { 
-            priority: 'high',
-            collapseKey: chatId,
-            notification: {
-              tag: chatId,
-              color: '#2196F3',
-            }
-          },
-          token,
-        });
-
-        recentNotifications.set(notificationKey, now);
-        return res.json({ success: true, bundled: true, messageId });
-      } catch (error) {
-        console.error('Error sending bundled notification:', error.message);
-      }
+      const messageId = await admin.messaging().send({
+        data: {
+          ...data,
+          type: 'notification_update',
+          title,
+          body,
+          timestamp: now.toString(),
+        },
+        android: {
+          priority: 'high',
+          collapseKey: chatId,
+          notification: { tag: chatId, color: '#2196F3' }
+        },
+        token,
+      });
+      recentNotifications.set(notificationKey, now);
+      return res.json({ success: true, bundled: true, messageId });
     }
 
     // Send new notification
@@ -78,15 +62,10 @@ app.post('/send-notification', async (req, res) => {
         timestamp: now.toString(),
         type: 'new_message'
       },
-      android: { 
+      android: {
         priority: 'high',
         collapseKey: chatId,
-        notification: {
-          tag: chatId,
-          color: '#2196F3',
-          sound: 'default',
-          channelId: 'freechat_messages'
-        }
+        notification: { tag: chatId, color: '#2196F3', sound: 'default', channelId: 'freechat_messages' }
       },
       token,
     });
