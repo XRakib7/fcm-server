@@ -8,7 +8,7 @@ app.use(express.json());
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
-// In-memory store for recent notifications (in production, use Redis)
+// In-memory store for recent notifications
 const recentNotifications = new Map();
 
 // Clean up old notifications every hour
@@ -21,46 +21,29 @@ setInterval(() => {
   }
 }, 3600000);
 
-// Health check
 app.get('/', (req, res) => res.json({ status: 'ok' }));
 
-// Send notification endpoint
 app.post('/send-notification', async (req, res) => {
   try {
     const { token, title, body, data = {} } = req.body;
 
-    // Basic validation
     if (!token || !title || !body) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Check if user is online/in chat (sent from client)
-    const isUserInChat = data.isInChat === 'true';
-    const senderId = data.senderId;
-    const recipientId = data.recipientId;
     const chatId = data.chatId;
-
-    // DON'T send notification if user is in the same chat
-    if (isUserInChat && chatId === data.currentChatId) {
-      console.log(`User ${recipientId} is in chat ${chatId}, skipping notification`);
-      return res.json({ 
-        success: true, 
-        skipped: true, 
-        reason: 'user_in_chat' 
-      });
-    }
-
-    // Generate a notification key for bundling
-    const notificationKey = `${recipientId}_${chatId}`;
+    const recipientId = data.recipientId;
     const now = Date.now();
+
+    // Generate notification key for bundling
+    const notificationKey = `${recipientId}_${chatId}`;
     const lastNotificationTime = recentNotifications.get(notificationKey);
 
-    // If we sent a notification for this chat in the last 30 seconds, update it instead
+    // If we sent a notification for this chat in the last 30 seconds, update it
     if (lastNotificationTime && (now - lastNotificationTime) < 30000) {
       console.log(`Bundling notification for chat ${chatId}`);
       
       try {
-        // Send a data-only message to update existing notification
         const messageId = await admin.messaging().send({
           data: {
             ...data,
@@ -68,21 +51,20 @@ app.post('/send-notification', async (req, res) => {
             title,
             body,
             timestamp: now.toString(),
-            messageCount: (parseInt(data.messageCount) || 1).toString()
           },
           android: { 
             priority: 'high',
-            collapseKey: chatId // This groups notifications by chat
+            collapseKey: chatId,
+            notification: {
+              tag: chatId,
+              color: '#2196F3',
+            }
           },
           token,
         });
 
         recentNotifications.set(notificationKey, now);
-        return res.json({ 
-          success: true, 
-          bundled: true, 
-          messageId 
-        });
+        return res.json({ success: true, bundled: true, messageId });
       } catch (error) {
         console.error('Error sending bundled notification:', error.message);
       }
@@ -90,10 +72,7 @@ app.post('/send-notification', async (req, res) => {
 
     // Send new notification
     const messageId = await admin.messaging().send({
-      notification: { 
-        title: title,
-        body: body
-      },
+      notification: { title, body },
       data: {
         ...data,
         timestamp: now.toString(),
@@ -101,9 +80,9 @@ app.post('/send-notification', async (req, res) => {
       },
       android: { 
         priority: 'high',
-        collapseKey: chatId, // Collapse by chat ID
+        collapseKey: chatId,
         notification: {
-          tag: chatId, // This replaces existing notification for this chat
+          tag: chatId,
           color: '#2196F3',
           sound: 'default',
           channelId: 'freechat_messages'
@@ -112,9 +91,7 @@ app.post('/send-notification', async (req, res) => {
       token,
     });
 
-    // Store notification time for bundling future messages
     recentNotifications.set(notificationKey, now);
-    
     console.log(`Notification sent to ${recipientId} for chat ${chatId}`);
     res.json({ success: true, messageId });
   } catch (error) {
